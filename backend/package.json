@@ -1,0 +1,37 @@
+{
+  "name": "freight-dashboard-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Freight Intelligence Dashboard",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "ingest:news": "tsx src/ingest/news.ts",
+    "ingest:daily": "tsx src/ingest/daily.ts",
+    "ingest:macro": "tsx src/ingest/macro.ts",
+    "ingest:all": "npm run ingest:news && npm run ingest:daily && npm run ingest:macro",
+    "db:init": "tsx src/db/init.ts"
+  },
+  "keywords": ["freight", "logistics", "api"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "better-sqlite3": "^11.8.0",
+    "dotenv": "^16.3.1",
+    "rss-parser": "^3.13.0",
+    "axios": "^1.6.2",
+    "cheerio": "^1.0.0-rc.12",
+    "date-fns": "^3.0.6"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^20.10.6",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0"
+  }
+}
