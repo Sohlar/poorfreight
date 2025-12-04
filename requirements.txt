@@ -1,0 +1,30 @@
+# Freight Intelligence Portal
+# Latest stable versions
+
+# === Core Framework ===
+streamlit
+
+# === Database ===
+sqlalchemy
+
+# === Data Processing ===
+pandas
+numpy
+
+# === Visualization ===
+plotly
+
+# === Web Scraping ===
+beautifulsoup4
+requests
+lxml
+feedparser
+newspaper3k
+
+# === Job Scheduling ===
+APScheduler
+
+# === Utilities ===
+python-dotenv
+python-dateutil
+scipy

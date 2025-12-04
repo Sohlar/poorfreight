@@ -1,0 +1,402 @@
+"""
+News Intelligence Page
+Primary focus: Curated news analysis with filtering, tagging, and annotations
+"""
+
+import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta, timezone
+import sys
+import os
+
+# Add parent directory to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from lib.database import SessionLocal, NewsArticle
+from lib.utils import get_all_tags_from_db, format_date
+
+st.set_page_config(
+    page_title="News Intelligence",
+    page_icon="📰",
+    layout="wide"
+)
+
+# === FUNCTIONS ===
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def load_news(sources=None, days_back=7, min_importance=1, search_query="", selected_tags=None):
+    """Load and filter news articles"""
+    db = SessionLocal()
+
+    try:
+        query = db.query(NewsArticle)
+
+        # Filter by sources
+        if sources:
+            query = query.filter(NewsArticle.source.in_(sources))
+
+        # Filter by date
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_back)
+        query = query.filter(NewsArticle.published_at >= cutoff_date)
+
+        # Filter by importance
+        query = query.filter(NewsArticle.importance >= min_importance)
+
+        # Search in title/summary
+        if search_query:
+            search_pattern = f"%{search_query}%"
+            query = query.filter(
+                (NewsArticle.title.like(search_pattern)) |
+                (NewsArticle.summary.like(search_pattern))
+            )
+
+        # Filter by tags
+        if selected_tags:
+            for tag in selected_tags:
+                query = query.filter(NewsArticle.tags.like(f"%{tag}%"))
+
+        # Order by date
+        articles = query.order_by(NewsArticle.published_at.desc()).all()
+
+        return articles
+
+    finally:
+        db.close()
+
+
+def update_article(article_id, importance, tags, notes):
+    """Update article metadata"""
+    db = SessionLocal()
+    try:
+        article = db.query(NewsArticle).filter_by(id=article_id).first()
+        if article:
+            article.importance = importance
+            article.tags = tags
+            article.notes = notes
+            article.updated_at = datetime.now(timezone.utc)
+            db.commit()
+    finally:
+        db.close()
+
+
+def mark_as_read(article_id):
+    """Mark article as read"""
+    db = SessionLocal()
+    try:
+        article = db.query(NewsArticle).filter_by(id=article_id).first()
+        if article:
+            article.read = True
+            db.commit()
+    finally:
+        db.close()
+
+
+@st.cache_data(ttl=600)
+def get_available_sources():
+    """Get list of sources with article counts"""
+    db = SessionLocal()
+    try:
+        from sqlalchemy import func
+        results = db.query(
+            NewsArticle.source,
+            func.count(NewsArticle.id).label('count')
+        ).group_by(NewsArticle.source).all()
+
+        return {source: count for source, count in results}
+    finally:
+        db.close()
+
+
+@st.cache_data(ttl=600)
+def get_all_tags():
+    """Get all unique tags"""
+    db = SessionLocal()
+    try:
+        return get_all_tags_from_db(db)
+    finally:
+        db.close()
+
+
+def display_article_card(article):
+    """Display article as expandable card"""
+    # Star rating display
+    stars = "⭐" * article.importance
+
+    # Unread indicator
+    unread_badge = "🔴 " if not article.read else ""
+
+    with st.expander(
+        f"{unread_badge}{stars} **{article.title}** - *{article.source}*",
+        expanded=False
+    ):
+        col1, col2 = st.columns([3, 1])
+
+        with col1:
+            # Summary
+            if article.summary:
+                st.write(article.summary)
+
+            # Full content toggle
+            if article.full_content:
+                if st.button("📄 Show full article", key=f"full_{article.id}"):
+                    st.markdown(article.full_content[:1000] + "..." if len(article.full_content) > 1000 else article.full_content)
+
+            # Tags display
+            if article.tags:
+                tags_list = [t.strip() for t in article.tags.split(',')]
+                tag_badges = " ".join([f"`{tag}`" for tag in tags_list])
+                st.markdown(f"**Tags:** {tag_badges}")
+
+            st.caption(f"📅 Published: {article.published_at.strftime('%Y-%m-%d %H:%M')} UTC")
+            st.markdown(f"[🔗 Read original article]({article.url})")
+
+        with col2:
+            # Quick actions
+            st.write("**Actions**")
+
+            importance = st.select_slider(
+                "Importance",
+                options=[1, 2, 3, 4, 5],
+                value=article.importance,
+                key=f"imp_{article.id}",
+                help="1=low, 5=critical"
+            )
+
+            tags_input = st.text_input(
+                "Tags",
+                value=article.tags or "",
+                placeholder="capacity,rates,diesel",
+                key=f"tags_{article.id}",
+                help="Comma-separated tags"
+            )
+
+            notes = st.text_area(
+                "Notes",
+                value=article.notes or "",
+                placeholder="Why this matters...",
+                key=f"notes_{article.id}",
+                height=100
+            )
+
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("💾 Save", key=f"save_{article.id}"):
+                    update_article(article.id, importance, tags_input, notes)
+                    st.success("Saved!")
+                    st.cache_data.clear()
+
+            with col_b:
+                if not article.read:
+                    if st.button("✅ Mark Read", key=f"read_{article.id}"):
+                        mark_as_read(article.id)
+                        st.cache_data.clear()
+                        st.rerun()
+
+        st.markdown("---")
+
+
+def display_article_compact(article):
+    """Display article in compact format"""
+    stars = "⭐" * article.importance
+    unread = "🔴" if not article.read else "  "
+
+    col1, col2, col3 = st.columns([4, 2, 1])
+
+    with col1:
+        st.markdown(f"{unread} {stars} **[{article.title}]({article.url})**")
+        if article.tags:
+            tags_list = [t.strip() for t in article.tags.split(',')]
+            tag_badges = " ".join([f"`{tag}`" for tag in tags_list[:3]])
+            st.caption(tag_badges)
+
+    with col2:
+        st.caption(f"{article.source}")
+
+    with col3:
+        st.caption(f"{article.published_at.strftime('%m/%d')}")
+
+
+# === MAIN PAGE ===
+
+st.title("📰 Freight News Intelligence")
+st.markdown("Curated news from freight industry sources with smart filtering and tagging")
+
+# === FILTERS ===
+st.markdown("### 🔍 Filters")
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    sources_dict = get_available_sources()
+    source_options = list(sources_dict.keys())
+    sources = st.multiselect(
+        "Sources",
+        source_options,
+        default=source_options,
+        help="Filter by news source"
+    )
+
+with col2:
+    days_back = st.slider(
+        "Last N days",
+        min_value=1,
+        max_value=90,
+        value=7,
+        help="Show articles from the last N days"
+    )
+
+with col3:
+    importance_filter = st.select_slider(
+        "Min Importance",
+        options=[1, 2, 3, 4, 5],
+        value=1,
+        help="Filter by importance rating (1=low, 5=critical)"
+    )
+
+with col4:
+    search_query = st.text_input(
+        "🔍 Search",
+        placeholder="capacity, rates, diesel...",
+        help="Search in titles and summaries"
+    )
+
+# Tag filter
+all_tags = get_all_tags()
+if all_tags:
+    selected_tags = st.multiselect(
+        "Filter by tags",
+        all_tags,
+        help="Show articles with these tags"
+    )
+else:
+    selected_tags = []
+    st.info("No tags available yet. Run the news scraper first: `python scrapers/news_scraper.py`")
+
+st.markdown("---")
+
+# === LOAD NEWS ===
+articles = load_news(
+    sources=sources if sources else None,
+    days_back=days_back,
+    min_importance=importance_filter,
+    search_query=search_query,
+    selected_tags=selected_tags if selected_tags else None
+)
+
+# === STATS ===
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric("Total Articles", len(articles))
+
+today_count = len([a for a in articles if a.published_at.date() == datetime.now(timezone.utc).date()])
+col2.metric("Today", today_count)
+
+important_count = len([a for a in articles if a.importance >= 4])
+col3.metric("Important (4-5★)", important_count)
+
+unread_count = len([a for a in articles if not a.read])
+col4.metric("Unread", unread_count)
+
+st.markdown("---")
+
+# === VIEW OPTIONS ===
+view_mode = st.radio(
+    "View mode",
+    ["Timeline", "List", "Compact"],
+    horizontal=True,
+    help="Choose how to display articles"
+)
+
+# Add refresh button
+col1, col2, col3 = st.columns([1, 1, 4])
+with col1:
+    if st.button("🔄 Refresh Data"):
+        st.cache_data.clear()
+        st.rerun()
+
+with col2:
+    if st.button("📥 Export to CSV"):
+        df = pd.DataFrame([{
+            'title': a.title,
+            'source': a.source,
+            'published': a.published_at,
+            'url': a.url,
+            'tags': a.tags,
+            'importance': a.importance,
+            'notes': a.notes
+        } for a in articles])
+
+        csv = df.to_csv(index=False)
+        st.download_button(
+            "Download CSV",
+            csv,
+            f"news_export_{datetime.now().strftime('%Y%m%d')}.csv",
+            "text/csv"
+        )
+
+st.markdown("---")
+
+# === DISPLAY ARTICLES ===
+
+if not articles:
+    st.warning("No articles found. Try adjusting filters or run the news scraper: `python scrapers/news_scraper.py`")
+else:
+    if view_mode == "Timeline":
+        # Group by date
+        articles_by_date = {}
+        for article in articles:
+            date_key = article.published_at.date()
+            if date_key not in articles_by_date:
+                articles_by_date[date_key] = []
+            articles_by_date[date_key].append(article)
+
+        for date in sorted(articles_by_date.keys(), reverse=True):
+            st.subheader(f"📅 {date.strftime('%A, %B %d, %Y')}")
+
+            for article in articles_by_date[date]:
+                display_article_card(article)
+
+    elif view_mode == "List":
+        for article in articles:
+            display_article_card(article)
+
+    else:  # Compact
+        for article in articles:
+            display_article_compact(article)
+
+
+# === SIDEBAR INFO ===
+with st.sidebar:
+    st.markdown("### 📊 Quick Stats")
+
+    if articles:
+        # Source breakdown
+        source_counts = {}
+        for article in articles:
+            source_counts[article.source] = source_counts.get(article.source, 0) + 1
+
+        st.markdown("**By Source:**")
+        for source, count in sorted(source_counts.items(), key=lambda x: x[1], reverse=True):
+            st.write(f"- {source}: {count}")
+
+        # Tag cloud
+        tag_counts = {}
+        for article in articles:
+            if article.tags:
+                for tag in article.tags.split(','):
+                    tag = tag.strip()
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+        if tag_counts:
+            st.markdown("**Top Tags:**")
+            for tag, count in sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
+                st.write(f"- {tag}: {count}")
+
+    st.markdown("---")
+    st.markdown("### 💡 Tips")
+    st.markdown("""
+    - Use tags to categorize articles
+    - Rate importance for quick filtering
+    - Add notes for strategy insights
+    - Export to CSV for offline review
+    """)

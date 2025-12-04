@@ -35,6 +35,15 @@ logs/
 coverage/
 .nyc_output/
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
 # Misc
 .cache/
 .turbo/
